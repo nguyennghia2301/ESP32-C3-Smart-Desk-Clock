@@ -45,7 +45,7 @@ The project covers hardware assembly, firmware development, and custom 3D enclos
 - Conducted soldering and physical connections.
 - Integrated the hardware components with the ESP32-C3 firmware.
 
-![Internal Hardware](images/hardware-inside.jpg)
+![Internal Hardware](wiring_diagram.jpg)
 
 ## Firmware Development
 
