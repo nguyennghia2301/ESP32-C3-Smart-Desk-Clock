@@ -28,9 +28,14 @@ The project covers hardware assembly, firmware development, and custom 3D enclos
 
 | Component | Description |
 |---|---|
-| Microcontroller | ESP32-C3 |
-| Display | LCD |
+| Microcontroller | ESP32-C3 mini |
+| Display | Pcbfun TFT 1,8 inch + EC11 |
 | Enclosure | Custom 3D-printed case |
+| Speaker | Pcbfun 3525 3w 4ohm |
+| Charge module | TP4056 |
+| Battery | Lithium 3.7V |
+| Amplifier module | PAM8406 |
+| Transformer circuit | 5v 8v 9v 12v |
 
 *Additional components and specifications will be documented as needed.*
 
