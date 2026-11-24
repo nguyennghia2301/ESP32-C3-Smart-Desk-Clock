@@ -1,0 +1,588 @@
+#include <WiFi.h>
+#include <Wire.h>
+#include <SPI.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_ST7735.h>
+#include <WiFiManager.h> 
+#include "time.h"
+
+// ====== IMPORT FILE ẢNH TỪ TAB KHÁC ======
+#include "image.h"
+
+// ====== Time config ======
+const char* ntpServer = "pool.ntp.org";
+const long  gmtOffset_sec      = 7 * 3600;   // GMT+7
+const int    daylightOffset_sec = 0;
+
+// ====== Pins ======
+#define TFT_CS     9
+#define TFT_DC     8
+#define TFT_RST    7
+#define TFT_MOSI   6
+#define TFT_SCLK   5
+
+#define ENC_A_PIN    10
+#define ENC_B_PIN    20
+#define ENC_BTN_PIN  21
+#define KEY0_PIN     0
+
+#define SDA_PIN 1
+#define SCL_PIN 2
+
+#define LED_PIN 4
+#define BUZZ_PIN 3
+
+// ====== TFT ======
+Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_RST); 
+
+// ====== Colors ======
+#define CYBER_BG      ST77XX_BLACK
+#define CYBER_GREEN   0x07E0  
+#define CYBER_ACCENT  0x07FF  
+#define CYBER_LIGHT   0xFD20  
+#define CYBER_BLUE    0x07FF  
+#define CYBER_PINK    0xF81F
+#define CYBER_DARK    0x4208
+
+// =========================================================================
+// [QUẢN LÝ ALBUM ẢNH] Chỉ cần cập nhật danh sách này tại file chính
+// =========================================================================
+#define TOTAL_PICS 17  // Sửa thành 15 hoặc 20 tùy thuộc số ảnh bạn để trong file images.h
+const uint16_t* album_data[TOTAL_PICS] = {
+  epd_bitmap_0,
+	epd_bitmap_1,
+	epd_bitmap_10,
+	epd_bitmap_11,
+	epd_bitmap_12,
+	epd_bitmap_13,
+	epd_bitmap_14,
+	epd_bitmap_15,
+	epd_bitmap_16,
+	epd_bitmap_2,
+	epd_bitmap_3,
+	epd_bitmap_4,
+	epd_bitmap_5,
+	epd_bitmap_6,
+	epd_bitmap_7,
+	epd_bitmap_8,
+	epd_bitmap_9
+};
+
+// ====== Modes ======
+enum UIMode {
+  MODE_MENU = 0,
+  MODE_CLOCK,
+  MODE_LOVE,
+  MODE_ALARM,
+  MODE_ALBUM 
+};
+UIMode currentMode = MODE_CLOCK;       
+int menuIndex = 0;
+const int MENU_ITEMS = 4;      
+
+// ====== Album vars ======
+int currentPicIndex = 0;
+
+// ====== Clock vars ======
+int    prevSecond  = -1;
+String prevTimeStr = "";
+int    prevLoveDays = -1;              
+
+// ====== Encoder & Buttons ======
+int  lastEncA   = HIGH;
+int  lastEncB   = HIGH;
+bool lastEncBtn = HIGH;
+bool lastKey0   = HIGH;
+unsigned long lastBtnMs = 0;
+
+// ====== Alarm ======
+bool     alarmEnabled = false;
+uint8_t  alarmHour    = 7;
+uint8_t  alarmMinute  = 0;
+bool     alarmRinging = false;
+int      alarmSelectedField = 0; 
+int      lastAlarmDayTriggered = -1;
+
+// ====== Alert / LED Blink ======
+unsigned long lastLedToggleMs = 0;
+bool ledState = false;
+
+// ========= Helper: encoder & button =========
+int readEncoderStep() {
+  int encA = digitalRead(ENC_A_PIN);
+  int encB = digitalRead(ENC_B_PIN);
+  int step = 0;
+  if (encA != lastEncA) {
+    if (encA == LOW) {
+      if (encB == HIGH) step = +1;
+      else              step = -1;
+    }
+  }
+  lastEncA = encA;
+  lastEncB = encB;
+  return step;
+}
+
+bool checkButtonPressed(uint8_t pin, bool &lastState) {
+  bool cur = digitalRead(pin);
+  bool pressed = false;
+  unsigned long now = millis();
+  if (cur == LOW && lastState == HIGH && (now - lastBtnMs) > 150) {
+    pressed = true;
+    lastBtnMs = now;
+  }
+  lastState = cur;
+  return pressed;
+}
+
+// ========= WiFiManager Portal Callback =========
+void configModeCallback(WiFiManager *myWiFiManager) {
+  tft.fillScreen(CYBER_BG);
+  tft.setTextSize(1);
+  tft.setTextColor(ST77XX_RED);
+  tft.setCursor(10, 20);
+  tft.println("WiFi Disconnected!");
+  
+  tft.setTextColor(CYBER_ACCENT);
+  tft.setCursor(10, 45);
+  tft.println("Connect Phone To WiFi:");
+  tft.setTextColor(ST77XX_WHITE);
+  tft.setCursor(15, 60);
+  tft.println("> Cyber_Clock_WiFi");
+  
+  tft.setTextColor(CYBER_LIGHT);
+  tft.setCursor(10, 85);
+  tft.println("Setup page will pop up");
+  tft.setCursor(10, 100);
+  tft.println("to enter new password!");
+}
+
+// ========= Connect WiFi & Sync Time =========
+void connectWiFiAndSyncTime() {
+  tft.fillScreen(CYBER_BG);
+  tft.setTextColor(CYBER_LIGHT);
+  tft.setTextSize(1);
+  tft.setCursor(10, 55);
+  tft.print("Checking WiFi...");
+
+  WiFiManager wm;
+  wm.setConfigPortalTimeout(180); 
+  wm.setAPCallback(configModeCallback);
+
+  if (!wm.autoConnect("Cyber_Clock_WiFi")) {
+    tft.fillScreen(CYBER_BG);
+    tft.setCursor(10, 55);
+    tft.setTextColor(ST77XX_RED);
+    tft.print("Timeout! Booting Clock...");
+    delay(2000);
+    return;
+  }
+
+  tft.fillScreen(CYBER_BG);
+  tft.setCursor(10, 55);
+  tft.setTextColor(CYBER_GREEN);
+  tft.print("WiFi Connected!");
+  delay(1000);
+
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+  tft.fillScreen(CYBER_BG);
+  tft.setCursor(10, 55);
+  tft.setTextColor(ST77XX_WHITE);
+  tft.print("Syncing time...");
+  delay(800);
+}
+
+String getTimeStr(char type) {
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) return "--";
+  char buf[8];
+  if (type == 'H') strftime(buf, sizeof(buf), "%H", &timeinfo);
+  else if (type == 'M') strftime(buf, sizeof(buf), "%M", &timeinfo);
+  else if (type == 'S') strftime(buf, sizeof(buf), "%S", &timeinfo);
+  return String(buf);
+}
+
+int calculateLoveDays() {
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) return -1;
+
+  struct tm start_time;
+  start_time.tm_year = 2022 - 1900; 
+  start_time.tm_mon  = 7 - 1;       
+  start_time.tm_mday = 17;
+  start_time.tm_hour = 0;
+  start_time.tm_min  = 0;
+  start_time.tm_sec  = 0;
+  start_time.tm_isdst = -1;
+
+  time_t start_t = mktime(&start_time);
+  time_t current_t = mktime(&timeinfo);
+
+  if (current_t < start_t) return 0;
+
+  double diff_seconds = difftime(current_t, start_t);
+  int days = diff_seconds / (24 * 3600);
+  return days;
+}
+
+// ========= Clock UI =========
+void initClockStaticUI() {
+  tft.drawRGBBitmap(0, 0, album_data[0], 160, 128);
+  tft.setTextSize(1);
+  tft.setTextColor(ST77XX_WHITE);
+  tft.setCursor(4, 4);
+  tft.print("Digital Clock");
+}
+
+void drawClockTime(String hourStr, String minStr, String secStr) {
+  String cur = hourStr + ":" + minStr + ":" + secStr;
+  if (cur == prevTimeStr) return;
+
+  int16_t x1, y1;
+  uint16_t w, h;
+  tft.setTextSize(3);
+
+  int box_w = 144;
+  int box_h = 26;
+  int box_x = (160 - box_w) / 2;
+  int box_y = (128 - box_h) / 2;
+
+  if (prevTimeStr != "") {
+    uint16_t* local_buffer = (uint16_t*) malloc(box_w * box_h * sizeof(uint16_t));
+    if (local_buffer != NULL) {
+      for (int r = 0; r < box_h; r++) {
+        for (int c = 0; c < box_w; c++) {
+          int flash_index = (box_y + r) * 160 + (box_x + c);
+          local_buffer[r * box_w + c] = pgm_read_word(&album_data[0][flash_index]);
+        }
+      }
+      tft.drawRGBBitmap(box_x, box_y, local_buffer, box_w, box_h);
+      free(local_buffer);
+    } else {
+      tft.fillRect(box_x, box_y, box_w, box_h, CYBER_BG);
+    }
+  }
+
+  prevTimeStr = cur;
+  tft.getTextBounds(cur, 0, 0, &x1, &y1, &w, &h);
+  int x = (160 - w) / 2;
+  int y = (128 - h) / 2;
+
+  tft.setTextColor(CYBER_LIGHT);
+  tft.setCursor(x, y);
+  tft.print(cur);
+}
+
+// ========= Love Counter UI =========
+void drawLoveCounterScreen(bool forceRedraw) {
+  int days = calculateLoveDays();
+  if (days == prevLoveDays && !forceRedraw) return;
+  prevLoveDays = days;
+
+  tft.fillScreen(CYBER_BG);
+  tft.setTextSize(1);
+  tft.setTextColor(CYBER_PINK);
+  tft.setCursor(8, 4);
+  tft.print("LOVE COUNTER");
+
+  int cx = 80;
+  int cy = 40;
+  tft.fillCircle(cx - 10, cy, 11, CYBER_PINK);
+  tft.fillCircle(cx + 10, cy, 11, CYBER_PINK);
+  tft.fillTriangle(cx - 21, cy, cx + 21, cy, cx, cy + 24, CYBER_PINK);
+
+  tft.setTextSize(1);
+  tft.setTextColor(ST77XX_WHITE);
+  tft.setCursor(68, 36);
+  tft.print("DAYS");
+
+  String dayStr = (days >= 0) ? String(days) : "---";
+  tft.setTextSize(3);
+  int16_t x1, y1;
+  uint16_t w, h;
+  tft.getTextBounds(dayStr, 0, 0, &x1, &y1, &w, &h);
+  tft.setCursor(cx - w / 2, 78);
+  tft.setTextColor(CYBER_LIGHT);
+  tft.print(dayStr);
+
+  tft.setTextSize(1);
+  tft.setTextColor(ST77XX_WHITE);
+  tft.setCursor(26, 112);
+  tft.print("Since: 17-07-2022");
+}
+
+// ========= Menu UI =========
+void drawMenu() {
+  tft.fillScreen(CYBER_BG);
+  tft.setTextSize(1);
+  tft.setTextColor(CYBER_LIGHT);
+  tft.setCursor(10, 10);
+  tft.print("MODE SELECT");
+
+  const char* items[MENU_ITEMS] = {
+    "Monitor Clock",
+    "Love Counter",
+    "Alarm Setup",
+    "Photo Album" 
+  };
+
+  for (int i = 0; i < MENU_ITEMS; i++) {
+    int y = 28 + i * 18;
+    if (i == menuIndex) {
+      tft.fillRect(6, y - 2, 148, 14, CYBER_ACCENT);
+      tft.setTextColor(CYBER_BG);
+    } else {
+      tft.fillRect(6, y - 2, 148, 14, CYBER_BG);
+      tft.setTextColor(ST77XX_WHITE);
+    }
+    tft.setCursor(12, y);
+    tft.print(items[i]);
+  }
+}
+
+// ========= Alarm UI =========
+void drawAlarmScreen(bool full) {
+  if (full) {
+    tft.fillScreen(CYBER_BG);
+    tft.setTextSize(1);
+    tft.setCursor(8, 4);
+    tft.setTextColor(CYBER_LIGHT);
+    tft.print("ALARM");
+  }
+
+  char hBuf[3];
+  char mBuf[3];
+  sprintf(hBuf, "%02d", alarmHour);
+  sprintf(mBuf, "%02d", alarmMinute);
+
+  tft.setTextSize(3);
+  String disp = String(hBuf) + ":" + String(mBuf);
+  int16_t x1, y1;
+  uint16_t w, h;
+  tft.getTextBounds(disp, 0, 0, &x1, &y1, &w, &h);
+  int x = (160 - w) / 2;
+  int y = 30;
+
+  tft.setCursor(x, y);
+  tft.setTextColor(alarmSelectedField == 0 ? CYBER_LIGHT : ST77XX_WHITE, CYBER_BG);
+  tft.print(hBuf);
+  tft.setTextColor(ST77XX_WHITE, CYBER_BG);
+  tft.print(":");
+  tft.setTextColor(alarmSelectedField == 1 ? CYBER_LIGHT : ST77XX_WHITE, CYBER_BG);
+  tft.print(mBuf);
+
+  tft.setTextSize(1);
+  tft.setTextColor(ST77XX_WHITE, CYBER_BG);
+  tft.fillRect(20, 80, 120, 24, CYBER_BG);
+  tft.setCursor(30, 84);
+  tft.print("Alarm:");
+  tft.setCursor(80, 84);
+  uint16_t enColor = alarmSelectedField == 2 ? CYBER_LIGHT : (alarmEnabled ? CYBER_GREEN : ST77XX_RED);
+  tft.setTextColor(enColor, CYBER_BG);
+  tft.print(alarmEnabled ? "ON " : "OFF");
+}
+
+void drawAlarmRingingScreen() {
+  tft.fillScreen(ST77XX_RED);
+  tft.setTextSize(2);
+  tft.setTextColor(ST77XX_WHITE, ST77XX_RED);
+  tft.setCursor(30, 40);
+  tft.print("ALARM!");
+}
+
+// ========= Album UI =========
+void drawAlbumScreen() {
+  tft.drawRGBBitmap(0, 0, album_data[currentPicIndex], 160, 128);
+  
+  tft.setTextSize(1);
+  tft.setTextColor(ST77XX_WHITE);
+  tft.setCursor(130, 116);
+  tft.printf("%d/%d", currentPicIndex + 1, TOTAL_PICS);
+}
+
+void checkAlarmTrigger() {
+  if (!alarmEnabled || alarmRinging) return;
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) return;
+
+  if (timeinfo.tm_hour == alarmHour && timeinfo.tm_min == alarmMinute && timeinfo.tm_sec == 0) {
+    alarmRinging = true;
+    lastAlarmDayTriggered = timeinfo.tm_mday;
+    currentMode = MODE_ALARM;
+    drawAlarmRingingScreen();
+  }
+}
+
+void updateAlertStateAndLED() {
+  unsigned long now = millis();
+  unsigned long interval = alarmRinging ? 120 : 1000;
+
+  if (now - lastLedToggleMs > interval) {
+    lastLedToggleMs = now;
+    ledState = !ledState;
+    digitalWrite(LED_PIN, ledState ? HIGH : LOW);
+  }
+}
+
+// ========= SETUP =========
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+
+  pinMode(ENC_A_PIN,   INPUT_PULLUP);
+  pinMode(ENC_B_PIN,   INPUT_PULLUP);
+  pinMode(ENC_BTN_PIN, INPUT_PULLUP);
+  pinMode(KEY0_PIN,    INPUT_PULLUP);
+
+  pinMode(LED_PIN, OUTPUT);
+  pinMode(BUZZ_PIN, OUTPUT);
+
+  SPI.begin(TFT_SCLK, -1, TFT_MOSI, TFT_CS);
+
+  tft.initR(INITR_BLACKTAB);
+  tft.setRotation(1);
+  tft.fillScreen(CYBER_BG);
+
+  connectWiFiAndSyncTime();
+
+  initClockStaticUI();
+  prevTimeStr = "";
+  drawClockTime(getTimeStr('H'), getTimeStr('M'), getTimeStr('S'));
+}
+
+// ========= LOOP =========
+void loop() {
+  static unsigned long lastWifiCheck = 0;
+  if (millis() - lastWifiCheck > 30000) {
+    lastWifiCheck = millis();
+    if (WiFi.status() != WL_CONNECTED) {
+       WiFi.begin(); 
+    }
+  }
+
+  int encStep     = readEncoderStep();
+  bool encPressed = checkButtonPressed(ENC_BTN_PIN, lastEncBtn);
+  bool k0Pressed  = checkButtonPressed(KEY0_PIN,    lastKey0);
+
+  checkAlarmTrigger();
+  updateAlertStateAndLED();
+
+  switch (currentMode) {
+    case MODE_MENU: {
+      if (encStep != 0) {
+        menuIndex += encStep;
+        if (menuIndex < 0) menuIndex = MENU_ITEMS - 1;
+        if (menuIndex >= MENU_ITEMS) menuIndex = 0;
+        drawMenu();
+      }
+      if (encPressed) {
+        if (menuIndex == 0) {
+          currentMode = MODE_CLOCK;
+          initClockStaticUI();
+          prevTimeStr = "";
+          drawClockTime(getTimeStr('H'), getTimeStr('M'), getTimeStr('S'));
+        } else if (menuIndex == 1) {
+          currentMode = MODE_LOVE;
+          drawLoveCounterScreen(true);
+        } else if (menuIndex == 2) {
+          currentMode = MODE_ALARM;
+          alarmSelectedField = 0;
+          drawAlarmScreen(true);
+        } else if (menuIndex == 3) { 
+          currentMode = MODE_ALBUM;
+          currentPicIndex = 0;
+          drawAlbumScreen();
+        }
+      }
+      break;
+    }
+
+    case MODE_CLOCK: {
+      struct tm timeinfo;
+      if (getLocalTime(&timeinfo)) {
+        int sec = timeinfo.tm_sec;
+        if (sec != prevSecond) {
+          prevSecond = sec;
+          drawClockTime(getTimeStr('H'), getTimeStr('M'), getTimeStr('S'));
+        }
+      }
+      if (k0Pressed) {
+        currentMode = MODE_MENU;
+        drawMenu();
+      }
+      break;
+    }
+
+    case MODE_LOVE: {
+      drawLoveCounterScreen(false);
+      if (k0Pressed) {
+        currentMode = MODE_MENU;
+        drawMenu();
+      }
+      break;
+    }
+
+    case MODE_ALARM: {
+      if (alarmRinging) {
+        static unsigned long lastBeep = 0;
+        if (millis() - lastBeep > 1000) {
+          lastBeep = millis();
+          tone(BUZZ_PIN, 2000, 400);
+        }
+        if (encPressed || k0Pressed) {
+          alarmRinging = false;
+          lastAlarmDayTriggered = -1;
+          noTone(BUZZ_PIN);
+          drawAlarmScreen(true);
+        }
+        break;
+      }
+
+      bool changed = false;
+      if (encStep != 0) {
+        if (alarmSelectedField == 0) {
+          if (encStep > 0) alarmHour = (alarmHour + 1) % 24;
+          else                 alarmHour = (alarmHour + 23) % 24;
+          changed = true;
+        } else if (alarmSelectedField == 1) {
+          if (encStep > 0) alarmMinute = (alarmMinute + 1) % 60;
+          else                 alarmMinute = (alarmMinute + 59) % 60;
+          changed = true;
+        } else if (alarmSelectedField == 2) {
+          alarmEnabled = !alarmEnabled;
+          changed = true;
+        }
+        if (changed) { lastAlarmDayTriggered = -1; }
+      }
+
+      if (encPressed) {
+        alarmSelectedField = (alarmSelectedField + 1) % 3;
+        changed = true;
+      }
+      if (k0Pressed) {
+        currentMode = MODE_MENU;
+        drawMenu();
+        break;
+      }
+      if (changed) {
+        drawAlarmScreen(false);
+      }
+      break;
+    }
+
+    case MODE_ALBUM: { 
+      if (encStep != 0) {
+        currentPicIndex += encStep;
+        if (currentPicIndex < 0) currentPicIndex = TOTAL_PICS - 1;
+        if (currentPicIndex >= TOTAL_PICS) currentPicIndex = 0;
+        drawAlbumScreen(); 
+      }
+      
+      if (k0Pressed || encPressed) { 
+        currentMode = MODE_MENU;
+        drawMenu();
+      }
+      break;
+    }
+  }
+}
