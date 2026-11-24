@@ -37,8 +37,6 @@ The project covers hardware assembly, firmware development, and custom 3D enclos
 | Amplifier module | PAM8406 |
 | Transformer circuit | 5v 8v 9v 12v |
 
-*Additional components and specifications will be documented as needed.*
-
 ## Hardware Development
 
 - Assembled electronic components and performed hardware wiring.
