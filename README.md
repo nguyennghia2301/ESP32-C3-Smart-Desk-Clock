@@ -17,7 +17,7 @@ The project covers hardware assembly, firmware development, and custom 3D enclos
 
 <!-- Add your actual product photos here -->
 
-![Product Overview](images/product-front.jpg)
+![Product Overview](images/front.jpg)
 
 *Final assembled product*
 
