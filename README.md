@@ -15,14 +15,13 @@ The project covers hardware assembly, firmware development, and custom 3D enclos
 
 ## Product Showcase
 
-<!-- Add your actual product photos here -->
-
 ![Product Overview](image/front.jpg)
 
-*Final assembled product*
+![Product in Operation](image/clock&day_counter.jpg)
 
-![Product in Operation](images/product-working.jpg)
+![Product in Operation](image/alarm.jpg)
 
+![Product in Operation](image/menu.jpg)
 *Device displaying its functions*
 
 ## Hardware Components
