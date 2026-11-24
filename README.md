@@ -53,19 +53,20 @@ The project covers hardware assembly, firmware development, and custom 3D enclos
 - Used AI-assisted coding tools to support code development and debugging.
 - Integrated the clock, photo album, alarm, and day counter functions.
 
-Source code: [`firmware/`](firmware/)
+Source code: [`monitor/monitor.ino`](monitor/monitor.ino)
+Image code file: [`monitor/image.h`](monitor/image.h)
 
 ## 3D Enclosure Design
 
 Designed a custom enclosure using Tinkercad to accommodate the electronic components and create a compact final product.
 
-![3D Enclosure Design](images/3d-enclosure.jpg)
+![3D Enclosure Design](3d_printed/enclosure.jpg)
 
 ## Tools & Technologies
 
-- **Microcontroller:** ESP32-C3
-- **Programming:** C/C++ (if applicable)
-- **Development Tools:** Arduino IDE (if applicable)
+- **Microcontroller:** ESP32-C3 mini
+- **Programming:** C/C++ 
+- **Development Tools:** Arduino IDE 
 - **3D Design:** Tinkercad
 - **Hardware Skills:** Soldering, Wiring, Hardware Assembly
 - **Development Support:** AI-assisted Coding
